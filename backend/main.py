@@ -188,6 +188,7 @@ def trust_device(device_id: str):
     return adapters.device_payload(device_id)
 
 
+@app.post("/api/devices/scan")
 @app.post("/api/scan")
 def scan_now():
     """Force un scan ARP immédiat."""
