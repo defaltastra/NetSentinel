@@ -62,3 +62,10 @@ Thumbs.db
 !.vscode/settings.json
 *.sublime-workspace
 *.sublime-project
+venv/
+__pycache__/
+*.pyc
+*.db
+*.pkl
+.env
+node_modules/

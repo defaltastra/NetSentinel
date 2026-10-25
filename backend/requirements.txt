@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+pydantic
+scapy
+mac-vendor-lookup
+scikit-learn
+numpy
+pandas
+joblib
+jinja2
+reportlab
