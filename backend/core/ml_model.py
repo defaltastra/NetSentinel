@@ -37,7 +37,7 @@ class MLDetector:
             self.model = None
             return False
 
-    def train(self, min_rows: int = 100, contamination: float = 0.01) -> Dict[str, Any]:
+    def train(self, min_rows: int = 100, contamination: float = 0.05) -> Dict[str, Any]:
         import joblib
         import numpy as np
         from sklearn.ensemble import IsolationForest

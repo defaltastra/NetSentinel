@@ -75,9 +75,13 @@ class TrafficMonitor:
         self.last_sec = _counter()
         self.error = None      # type: Optional[str]
         self.running = False
+        self.own_ip = None     # type: Optional[str]
 
     # --------------------------------------------------------- comptage
     def handle(self, p: Dict[str, Any]) -> None:
+        if (self.own_ip and p["proto"] == "ARP" and p.get("arp_op") == 1
+                and p["src"] == self.own_ip):
+            return
         kind = p["proto"].lower()
         if kind not in ("tcp", "udp", "dns", "icmp", "arp"):
             kind = "other"
@@ -131,6 +135,9 @@ class TrafficMonitor:
         while not self._stop.is_set():
             time.sleep(max(0.0, nxt - time.time()))
             nxt += 1
+            if time.time() - nxt > 3:
+                nxt = time.time() + 1
+                continue
             try:
                 self._tick()
             except Exception as exc:

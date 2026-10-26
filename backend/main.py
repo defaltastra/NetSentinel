@@ -83,6 +83,7 @@ def startup() -> None:
         cidr = cidr or det_cidr
 
     monitor = TrafficMonitor(detector, on_event=hub.publish, iface=iface)
+    monitor.own_ip = own_ip
     sim = None  # type: Optional[Simulator]
 
     if MODE == "simulate":
@@ -188,7 +189,6 @@ def trust_device(device_id: str):
     return adapters.device_payload(device_id)
 
 
-@app.post("/api/devices/scan")
 @app.post("/api/scan")
 def scan_now():
     """Force un scan ARP immédiat."""
