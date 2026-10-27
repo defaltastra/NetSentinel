@@ -1,29 +1,68 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { Page } from "../../types";
 import Icon from "../common/Icon";
-import { Search } from "../common/UIControls";
 import api from "../../services/api";
 
 export interface TopbarProps {
   page: Page;
   isBackendOnline: boolean;
-  isUsingMock: boolean;
   onRefreshHealth: () => void;
+  onRefreshAll?: () => Promise<void> | void;
 }
 
 export default function Topbar({
   page,
   isBackendOnline,
-  isUsingMock,
   onRefreshHealth,
+  onRefreshAll,
 }: TopbarProps) {
-  const [showStatusMenu, setShowStatusMenu] = useState(false);
+  // Backend aggregation window is 10 seconds (NETSENTINEL_WINDOW=10 in capture.py)
+  const [refreshInterval, setRefreshInterval] = useState(10);
+  const [secondsLeft, setSecondsLeft] = useState(10);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
   const title = page === "Reports" ? "Reports & Analytics" : page;
 
-  const toggleMock = (forceMock: boolean) => {
-    api.setForceMock(forceMock);
-    setShowStatusMenu(false);
-  };
+  // Sync refresh interval with settings or dynamic backend changes
+  useEffect(() => {
+    const unsub = api.onRefreshIntervalChange((interval) => {
+      setRefreshInterval(interval);
+      setSecondsLeft((prev) => Math.min(prev, interval));
+    });
+    return () => {
+      unsub();
+    };
+  }, []);
+
+  const handleManualRefresh = useCallback(async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    try {
+      if (onRefreshAll) {
+        await onRefreshAll();
+      } else {
+        await onRefreshHealth();
+      }
+    } finally {
+      const interval = api.getRefreshInterval() || refreshInterval || 10;
+      setSecondsLeft(interval);
+      setTimeout(() => setIsRefreshing(false), 500);
+    }
+  }, [isRefreshing, onRefreshAll, onRefreshHealth, refreshInterval]);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setSecondsLeft((prev) => {
+        if (prev <= 1) {
+          handleManualRefresh();
+          return refreshInterval;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [handleManualRefresh, refreshInterval]);
 
   return (
     <header className="topbar">
@@ -39,122 +78,32 @@ export default function Topbar({
       </div>
 
       <div className="top-actions">
-        {/* Backend API Connection Status Indicator */}
-        <div style={{ position: "relative" }}>
-          <button
-            type="button"
-            className="demo-badge"
-            style={{
-              cursor: "pointer",
-              background: isBackendOnline && !isUsingMock ? "rgba(118, 212, 194, 0.15)" : "rgba(15, 164, 175, 0.14)",
-              borderColor: isBackendOnline && !isUsingMock ? "rgba(118, 212, 194, 0.4)" : "rgba(15, 164, 175, 0.3)",
-              color: isBackendOnline && !isUsingMock ? "#76d4c2" : "var(--cyan)",
-            }}
-            onClick={() => setShowStatusMenu(!showStatusMenu)}
-            title="Click to toggle FastAPI / Mock Data mode"
-          >
-            <span
-              style={{
-                background: isBackendOnline && !isUsingMock ? "#76d4c2" : "var(--cyan)",
-              }}
-            />
-            {isBackendOnline && !isUsingMock ? "FastAPI Live" : "Demo Data"}
-          </button>
-
-          {showStatusMenu && (
-            <div
-              style={{
-                position: "absolute",
-                top: "36px",
-                right: "0",
-                zIndex: 60,
-                width: "250px",
-                background: "var(--panel-deep)",
-                border: "1px solid var(--border-strong)",
-                borderRadius: "10px",
-                padding: "12px",
-                boxShadow: "0 10px 25px rgba(0, 20, 22, 0.5)",
-              }}
-            >
-              <div style={{ fontSize: "11px", fontWeight: 600, color: "var(--ice)", marginBottom: "8px" }}>
-                Backend Integration Status
-              </div>
-              <div style={{ fontSize: "10px", color: "var(--muted)", marginBottom: "12px", lineHeight: "1.4" }}>
-                {isBackendOnline
-                  ? "✓ FastAPI server detected on localhost:8000"
-                  : "⚠ FastAPI server not detected. Using dummy mock data."}
-              </div>
-
-              <div style={{ display: "flex", flexDirection: "column", gap: "6px" }}>
-                <button
-                  type="button"
-                  style={{
-                    padding: "6px 10px",
-                    background: !isUsingMock ? "var(--cyan-soft)" : "transparent",
-                    border: "1px solid var(--border)",
-                    borderRadius: "6px",
-                    color: "var(--ice)",
-                    cursor: "pointer",
-                    fontSize: "10px",
-                    textAlign: "left",
-                  }}
-                  onClick={() => {
-                    toggleMock(false);
-                    onRefreshHealth();
-                  }}
-                >
-                  🟢 <strong>Use FastAPI Live API</strong>
-                </button>
-                <button
-                  type="button"
-                  style={{
-                    padding: "6px 10px",
-                    background: isUsingMock ? "var(--cyan-soft)" : "transparent",
-                    border: "1px solid var(--border)",
-                    borderRadius: "6px",
-                    color: "var(--ice)",
-                    cursor: "pointer",
-                    fontSize: "10px",
-                    textAlign: "left",
-                  }}
-                  onClick={() => toggleMock(true)}
-                >
-                  🟡 <strong>Force Mock Dummy Data</strong>
-                </button>
-              </div>
-
-              <div style={{ marginTop: "10px", paddingTop: "8px", borderTop: "1px solid var(--border)" }}>
-                <button
-                  type="button"
-                  style={{
-                    background: "transparent",
-                    border: 0,
-                    color: "var(--cyan)",
-                    cursor: "pointer",
-                    fontSize: "9px",
-                    padding: 0,
-                    display: "flex",
-                    alignItems: "center",
-                    gap: "4px",
-                  }}
-                  onClick={() => {
-                    onRefreshHealth();
-                  }}
-                >
-                  <Icon name="refresh" size={11} /> Check backend connection now
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <Search placeholder="Search network..." />
-
-        <button className="icon-button notification" aria-label="Notifications" type="button">
-          <Icon name="bell" />
-          <span />
+        {/* Auto-Refresh Countdown Badge */}
+        <button
+          type="button"
+          className="countdown-badge"
+          onClick={handleManualRefresh}
+          disabled={isRefreshing}
+          title={`Backend capture window: ${refreshInterval}s. Auto-refreshes in ${secondsLeft}s. Click to refresh now.`}
+        >
+          <span className={`badge-icon ${isRefreshing ? "spin" : ""}`}>
+            <Icon name="refresh" size={12} />
+          </span>
+          <span className="badge-text">
+            {isRefreshing ? "Syncing..." : `${secondsLeft}s`}
+          </span>
         </button>
 
+        {/* Backend API Connection Status Indicator */}
+        <button
+          type="button"
+          className={`status-badge ${isBackendOnline ? "online" : "offline"}`}
+          onClick={onRefreshHealth}
+          title={isBackendOnline ? "Backend Live. Click to re-check." : "Backend Offline. Click to retry."}
+        >
+          <span className="status-dot" />
+          <span>{isBackendOnline ? "Live" : "Offline"}</span>
+        </button>
       </div>
     </header>
   );

@@ -32,16 +32,6 @@ function RankList({ items }: { items: { name: string; value: string; width: numb
   );
 }
 
-const metricsByTimeframe: Record<
-  Timeframe,
-  { incoming: string; outgoing: string; peak: string }
-> = {
-  "1H": { incoming: "310 MB", outgoing: "172 MB", peak: "38.2 Mbps" },
-  "24H": { incoming: "1.82 GB", outgoing: "1.12 GB", peak: "86.4 Mbps" },
-  "7D": { incoming: "12.8 GB", outgoing: "6.6 GB", peak: "124.0 Mbps" },
-  "30D": { incoming: "48.6 GB", outgoing: "29.6 GB", peak: "148.5 Mbps" },
-};
-
 export default function NetworkTraffic() {
   const [trafficData, setTrafficData] = useState<TrafficData | null>(null);
   const [records, setRecords] = useState<TrafficRecord[]>([]);
@@ -49,21 +39,36 @@ export default function NetworkTraffic() {
   const [search, setSearch] = useState("");
   const [protocolFilter, setProtocolFilter] = useState("All protocols");
   const [directionFilter, setDirectionFilter] = useState("Any direction");
+  const [maxLimit, setMaxLimit] = useState<number>(25);
 
-  useEffect(() => {
-    let mounted = true;
-    Promise.all([api.getTrafficData(), api.getTrafficRecords()]).then(
+  const loadTraffic = (range: Timeframe) => {
+    Promise.all([api.getTrafficData(range), api.getTrafficRecords(100)]).then(
       ([traffic, recs]) => {
-        if (mounted) {
-          setTrafficData(traffic);
-          setRecords(recs);
-        }
+        setTrafficData(traffic);
+        setRecords(recs);
       }
     );
+  };
+
+  useEffect(() => {
+    loadTraffic(timeRange);
+
+    // In-place tick update
+    const unsubTick = api.onTick(() => {
+      loadTraffic(timeRange);
+    });
+
+    const unsubWs = api.subscribeWebSocket((event) => {
+      if (event.type === "traffic") {
+        loadTraffic(timeRange);
+      }
+    });
+
     return () => {
-      mounted = false;
+      unsubTick();
+      unsubWs();
     };
-  }, []);
+  }, [timeRange]);
 
   const filteredRecords = records.filter((r) => {
     const matchesSearch =
@@ -91,8 +96,6 @@ export default function NetworkTraffic() {
     exportToCsv("netsentinel_network_traffic.csv", rows, headers);
   };
 
-  const currentMetrics = metricsByTimeframe[timeRange];
-
   return (
     <>
       <PageHeader
@@ -108,20 +111,20 @@ export default function NetworkTraffic() {
       <div className="stats-grid three compact-stats">
         <StatCard
           label="Incoming Traffic"
-          value={currentMetrics.incoming}
-          detail={`Total in selected ${timeRange}`}
+          value={trafficData?.incomingTotal || "0 B"}
+          detail={`Total incoming in ${timeRange}`}
           icon="download"
         />
         <StatCard
           label="Outgoing Traffic"
-          value={currentMetrics.outgoing}
-          detail={`Total in selected ${timeRange}`}
+          value={trafficData?.outgoingTotal || "0 B"}
+          detail={`Total outgoing in ${timeRange}`}
           icon="traffic"
         />
         <StatCard
           label="Peak Throughput"
-          value={currentMetrics.peak}
-          detail={`Peak recorded during ${timeRange}`}
+          value={trafficData?.peakThroughput || "0 bps"}
+          detail={`Peak throughput in ${timeRange}`}
           icon="wifi"
         />
       </div>
@@ -148,46 +151,44 @@ export default function NetworkTraffic() {
         <div className="legend-row">
           <span>
             <i className="legend-dot cyan" />
-            Incoming: <strong>{currentMetrics.incoming}</strong>
+            Incoming: <strong>{trafficData?.incomingTotal || "0 B"}</strong>
           </span>
           <span>
             <i className="legend-dot ice" />
-            Outgoing: <strong>{currentMetrics.outgoing}</strong>
+            Outgoing: <strong>{trafficData?.outgoingTotal || "0 B"}</strong>
           </span>
         </div>
-        <TrafficChart timeframe={timeRange} />
+        <TrafficChart timeframe={timeRange} timeline={trafficData?.timeline} />
       </Card>
 
       <div className="analytics-grid">
         <Card>
           <SectionHead title="Protocol Distribution" subtitle="Hover to view percentage" />
-          <DonutChart segments={trafficData?.protocols} />
+          <DonutChart
+            segments={trafficData?.protocols || []}
+            total={trafficData?.totalVolume}
+            totalUnit="total"
+          />
         </Card>
         <Card>
           <SectionHead title="Top Source IPs" subtitle="By total transfer" />
-          <RankList
-            items={
-              trafficData?.topSources || [
-                { name: "192.168.1.47", value: "842 MB", width: 92 },
-                { name: "10.0.0.18", value: "621 MB", width: 73 },
-                { name: "192.168.1.22", value: "388 MB", width: 52 },
-                { name: "172.16.0.14", value: "244 MB", width: 35 },
-              ]
-            }
-          />
+          {trafficData?.topSources && trafficData.topSources.length > 0 ? (
+            <RankList items={trafficData.topSources} />
+          ) : (
+            <div style={{ padding: "24px", textAlign: "center", color: "var(--muted)", fontSize: "12px" }}>
+              No traffic sources recorded yet.
+            </div>
+          )}
         </Card>
         <Card>
-          <SectionHead title="Most Active Devices" subtitle="Connections in last 24h" />
-          <RankList
-            items={
-              trafficData?.activeDevices || [
-                { name: "Design Workstation", value: "4,218", width: 96 },
-                { name: "Media Server", value: "3,082", width: 71 },
-                { name: "Alex’s MacBook", value: "2,441", width: 58 },
-                { name: "Jordan’s Pixel", value: "1,208", width: 31 },
-              ]
-            }
-          />
+          <SectionHead title="Most Active Devices" subtitle="Connections in selected period" />
+          {trafficData?.activeDevices && trafficData.activeDevices.length > 0 ? (
+            <RankList items={trafficData.activeDevices} />
+          ) : (
+            <div style={{ padding: "24px", textAlign: "center", color: "var(--muted)", fontSize: "12px" }}>
+              No active devices recorded yet.
+            </div>
+          )}
         </Card>
       </div>
 
@@ -221,9 +222,17 @@ export default function NetworkTraffic() {
               <option value="Incoming">Incoming</option>
               <option value="Outgoing">Outgoing</option>
             </Select>
-            <Button variant="secondary" icon="filter">
-              More filters
-            </Button>
+            <Select
+              label="Max rows"
+              value={String(maxLimit)}
+              onChange={(val) => setMaxLimit(Number(val))}
+            >
+              <option value="15">Max: 15 rows</option>
+              <option value="25">Max: 25 rows</option>
+              <option value="50">Max: 50 rows</option>
+              <option value="100">Max: 100 rows</option>
+              <option value="500">All (500 max)</option>
+            </Select>
           </div>
         </div>
         <div className="table-wrap">
@@ -244,25 +253,40 @@ export default function NetworkTraffic() {
               </tr>
             </thead>
             <tbody>
-              {filteredRecords.map((r) => (
-                <tr key={r.id}>
-                  <td>{r.timestamp}</td>
-                  <td className="mono">{r.sourceIp}</td>
-                  <td className="mono">{r.destinationIp}</td>
-                  <td>
-                    <Badge tone="cyan">{r.protocol}</Badge>
-                  </td>
-                  <td>{r.port}</td>
-                  <td>{r.packetSize}</td>
-                  <td>
-                    <span className={`direction ${r.direction.toLowerCase()}`}>
-                      {r.direction}
-                    </span>
+              {filteredRecords.length === 0 ? (
+                <tr>
+                  <td colSpan={7} style={{ textAlign: "center", padding: "32px", color: "var(--muted)" }}>
+                    {search || protocolFilter !== "All protocols" || directionFilter !== "Any direction"
+                      ? "No connection records match the filter."
+                      : "No connection traffic recorded yet."}
                   </td>
                 </tr>
-              ))}
+              ) : (
+                filteredRecords.slice(0, maxLimit).map((r) => (
+                  <tr key={r.id}>
+                    <td>{r.timestamp}</td>
+                    <td className="mono">{r.sourceIp}</td>
+                    <td className="mono">{r.destinationIp}</td>
+                    <td>
+                      <Badge tone="cyan">{r.protocol}</Badge>
+                    </td>
+                    <td className="mono">{r.port}</td>
+                    <td>{r.packetSize}</td>
+                    <td>
+                      <Badge tone={r.direction === "Incoming" ? "cyan" : "neutral"}>
+                        {r.direction}
+                      </Badge>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
+        </div>
+        <div style={{ padding: "12px 18px", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", color: "var(--muted)", fontSize: "10px" }}>
+          <span>
+            Showing {Math.min(filteredRecords.length, maxLimit)} of {filteredRecords.length} records (Max limit: {maxLimit})
+          </span>
         </div>
       </Card>
     </>

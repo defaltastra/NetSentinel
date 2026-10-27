@@ -108,6 +108,13 @@ export interface ProtocolStat {
   color: "cyan" | "ice" | "teal" | "rust" | "muted";
 }
 
+export interface TrafficTimelinePoint {
+  ts: number;
+  time: string;
+  bytes: number;
+  packets: number;
+}
+
 export interface TrafficData {
   incomingTotal: string;
   outgoingTotal: string;
@@ -116,6 +123,48 @@ export interface TrafficData {
   protocols: ProtocolStat[];
   topSources: { name: string; value: string; width: number }[];
   activeDevices: { name: string; value: string; width: number }[];
+  timeline?: TrafficTimelinePoint[];
+}
+
+export interface ReportSummary {
+  generated_at: string;
+  hours: number;
+  score: number;
+  alerts_total: number;
+  alerts_by_severity: {
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+  };
+  alerts_by_type: { type: string; label: string; count: number }[];
+  devices_total: number;
+  devices_new: any[];
+  protocols: {
+    tcp: number;
+    udp: number;
+    dns: number;
+    icmp: number;
+    arp: number;
+    other: number;
+  };
+  packets: number;
+  bytes: number;
+  top_sources: { ip: string; packets: number; bytes: number }[];
+  recent_alerts: any[];
+  recommendations: { type: string; label: string; count: number; advice: string }[];
+}
+
+export interface BackendHealth {
+  status: string;
+  mode: string;
+  interface: string | null;
+  network: string | null;
+  uptime_s: number;
+  refresh_interval?: number;
+  capture_error: string | null;
+  scan_error: string | null;
+  ml_ready: boolean;
 }
 
 export interface ReportItem {
@@ -142,7 +191,6 @@ export interface WorkspaceSettings {
 export type BackendConnectionState = {
   isLive: boolean;
   isChecking: boolean;
-  usingMock: boolean;
   error?: string;
   backendUrl: string;
 };

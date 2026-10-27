@@ -19,22 +19,49 @@ export default function SecurityAlerts() {
   const [statusFilter, setStatusFilter] = useState("All statuses");
   const [showNotice, setShowNotice] = useState(true);
 
-  useEffect(() => {
-    let mounted = true;
-    api.getAlerts().then((data) => {
-      if (mounted) setAlerts(data);
+  const loadAlerts = () => {
+    api.getAlerts(severityFilter, statusFilter).then((data) => {
+      setAlerts(data);
     });
-    return () => {
-      mounted = false;
-    };
-  }, []);
+  };
 
-  const handleStatusChange = (alertId: string, newStatus: AlertStatus) => {
+  useEffect(() => {
+    loadAlerts();
+
+    // In-place tick update
+    const unsubTick = api.onTick(loadAlerts);
+
+    const unsubWs = api.subscribeWebSocket((event) => {
+      if (event.type === "alert") {
+        loadAlerts();
+      }
+    });
+
+    return () => {
+      unsubTick();
+      unsubWs();
+    };
+  }, [severityFilter, statusFilter]);
+
+  const handleStatusChange = async (alertId: string, newStatus: AlertStatus) => {
     setAlerts((prev) =>
       prev.map((a) => (a.id === alertId ? { ...a, status: newStatus } : a))
     );
-    api.updateAlertStatus(alertId, newStatus);
+    try {
+      await api.updateAlertStatus(alertId, newStatus);
+      loadAlerts();
+    } catch (err) {
+      console.error("Status update error:", err);
+    }
   };
+
+  const filteredAlerts = alerts.filter((a) => {
+    const matchesSearch =
+      a.title.toLowerCase().includes(search.toLowerCase()) ||
+      a.affectedDevice.toLowerCase().includes(search.toLowerCase()) ||
+      a.sourceIp.includes(search);
+    return matchesSearch;
+  });
 
   const handleExportAlerts = () => {
     const headers = ["Alert ID", "Title", "Severity", "Affected Device", "Source IP", "Destination IP", "Detected Time", "Status"];
@@ -50,18 +77,6 @@ export default function SecurityAlerts() {
     ]);
     exportToCsv("netsentinel_security_alerts.csv", rows, headers);
   };
-
-  const filteredAlerts = alerts.filter((a) => {
-    const matchesSearch =
-      a.title.toLowerCase().includes(search.toLowerCase()) ||
-      a.affectedDevice.toLowerCase().includes(search.toLowerCase()) ||
-      a.sourceIp.includes(search);
-    const matchesSeverity =
-      severityFilter === "All severities" || a.severity === severityFilter;
-    const matchesStatus =
-      statusFilter === "All statuses" || a.status === statusFilter;
-    return matchesSearch && matchesSeverity && matchesStatus;
-  });
 
   const criticalCount = alerts.filter((a) => a.severity === "Critical").length;
   const highCount = alerts.filter((a) => a.severity === "High").length;
@@ -82,28 +97,28 @@ export default function SecurityAlerts() {
       <div className="stats-grid four compact-stats">
         <StatCard
           label="Critical Alerts"
-          value={criticalCount || 2}
-          detail="Immediate review required"
+          value={criticalCount}
+          detail={criticalCount > 0 ? "Immediate review required" : "No critical alerts"}
           icon="shield"
-          tone="warning"
+          tone={criticalCount > 0 ? "warning" : "default"}
         />
         <StatCard
           label="High Severity"
-          value={highCount || 4}
-          detail="2 currently investigating"
+          value={highCount}
+          detail={highCount > 0 ? "Active investigation" : "No high severity alerts"}
           icon="bell"
-          tone="warning"
+          tone={highCount > 0 ? "warning" : "default"}
         />
         <StatCard
           label="Medium Severity"
-          value={mediumCount || 9}
-          detail="Across 6 devices"
+          value={mediumCount}
+          detail={`${mediumCount} medium alerts logged`}
           icon="traffic"
         />
         <StatCard
           label="Resolved Alerts"
-          value={resolvedCount || 38}
-          detail="+12 this week"
+          value={resolvedCount}
+          detail="Closed or mitigated"
           icon="check"
         />
       </div>
@@ -157,9 +172,6 @@ export default function SecurityAlerts() {
               <option value="Investigating">Investigating</option>
               <option value="Resolved">Resolved</option>
             </Select>
-            <Button variant="secondary" icon="filter">
-              Filters
-            </Button>
           </div>
         </div>
 
@@ -177,46 +189,56 @@ export default function SecurityAlerts() {
               </tr>
             </thead>
             <tbody>
-              {filteredAlerts.map((r, i) => (
-                <tr
-                  key={r.id}
-                  className={i === 0 ? "selected-alert" : ""}
-                  onClick={() => setSelectedAlert(r)}
-                >
-                  <td>
-                    <span className="event-name">
-                      <span className="event-icon">
-                        <Icon name="shield" size={15} />
-                      </span>
-                      <strong>{r.title}</strong>
-                    </span>
-                  </td>
-                  <td>
-                    <Badge tone={r.severity.toLowerCase() as "high" | "medium" | "low" | "critical"}>
-                      {r.severity}
-                    </Badge>
-                  </td>
-                  <td>{r.affectedDevice}</td>
-                  <td className="mono">{r.sourceIp}</td>
-                  <td>{r.timeDetected}</td>
-                  <td>
-                    <span className="status-text">{r.status}</span>
-                  </td>
-                  <td>
-                    <button
-                      className="icon-button"
-                      type="button"
-                      aria-label="More details"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedAlert(r);
-                      }}
-                    >
-                      <Icon name="more" />
-                    </button>
+              {filteredAlerts.length === 0 ? (
+                <tr>
+                  <td colSpan={7} style={{ textAlign: "center", padding: "36px", color: "var(--muted)" }}>
+                    {search || severityFilter !== "All severities" || statusFilter !== "All statuses"
+                      ? "No alerts match the current filter."
+                      : "No security alerts recorded. Your network is clear."}
                   </td>
                 </tr>
-              ))}
+              ) : (
+                filteredAlerts.map((r) => (
+                  <tr
+                    key={r.id}
+                    onClick={() => setSelectedAlert(r)}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <td>
+                      <span className="event-name">
+                        <span className="event-icon">
+                          <Icon name="shield" size={15} />
+                        </span>
+                        <strong>{r.title}</strong>
+                      </span>
+                    </td>
+                    <td>
+                      <Badge tone={r.severity.toLowerCase() as "high" | "medium" | "low" | "critical"}>
+                        {r.severity}
+                      </Badge>
+                    </td>
+                    <td>{r.affectedDevice}</td>
+                    <td className="mono">{r.sourceIp}</td>
+                    <td>{r.timeDetected}</td>
+                    <td>
+                      <span className="status-text">{r.status}</span>
+                    </td>
+                    <td>
+                      <button
+                        className="icon-button"
+                        type="button"
+                        aria-label="More details"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedAlert(r);
+                        }}
+                      >
+                        <Icon name="more" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

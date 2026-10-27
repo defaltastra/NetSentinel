@@ -16,7 +16,7 @@ export interface SidebarProps {
   onlineCount?: number;
 }
 
-export default function Sidebar({ page, setPage, onlineCount = 21 }: SidebarProps) {
+export default function Sidebar({ page, setPage, onlineCount = 0 }: SidebarProps) {
   return (
     <aside className="sidebar">
       <div className="brand">

@@ -21,6 +21,10 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      '/ws': {
+        target: process.env.VITE_WS_BACKEND_URL || 'ws://127.0.0.1:8000',
+        ws: true,
+      },
     },
   },
   preview: {

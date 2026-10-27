@@ -1,20 +1,35 @@
+import { useState } from "react";
 import type { Device } from "../../types";
 import Icon from "../common/Icon";
 import Badge from "../common/Badge";
+import Button from "../common/Button";
 import Card, { SectionHead } from "../common/Card";
 import TrafficChart from "../charts/TrafficChart";
+import api from "../../services/api";
 
 interface DeviceDrawerProps {
   device: Device;
   onClose: () => void;
+  onDeviceUpdated?: (updated: Device) => void;
 }
 
-export default function DeviceDrawer({ device, onClose }: DeviceDrawerProps) {
-  const connections = device.observedConnections || [
-    { host: "api.github.com", protocol: "HTTPS · 443" },
-    { host: "cloudflare.com", protocol: "HTTPS · 443" },
-    { host: "10.0.0.18", protocol: "SMB · 445" },
-  ];
+export default function DeviceDrawer({ device, onClose, onDeviceUpdated }: DeviceDrawerProps) {
+  const [isTrusting, setIsTrusting] = useState(false);
+  const connections = device.observedConnections || [];
+
+  const handleTrust = async () => {
+    setIsTrusting(true);
+    try {
+      const updated = await api.trustDevice(device.id || device.mac);
+      if (updated && onDeviceUpdated) {
+        onDeviceUpdated(updated);
+      }
+    } catch (err) {
+      console.error("Trust failed:", err);
+    } finally {
+      setIsTrusting(false);
+    }
+  };
 
   return (
     <div className="drawer-backdrop" onClick={onClose}>
@@ -57,30 +72,49 @@ export default function DeviceDrawer({ device, onClose }: DeviceDrawerProps) {
             </div>
           </div>
 
-          <Card>
-            <SectionHead title="Traffic statistics" subtitle="Last 24 hours" />
-            <div className="mini-stats">
-              <div>
-                <span>Incoming</span>
-                <strong>{device.incomingTraffic || "286 MB"}</strong>
+          <div style={{ marginTop: "12px", display: "flex", gap: "8px" }}>
+            <Button
+              variant="secondary"
+              icon="check"
+              onClick={handleTrust}
+              disabled={isTrusting}
+            >
+              {isTrusting ? "Marking Trusted..." : "Mark as Trusted Baseline"}
+            </Button>
+          </div>
+
+          <div style={{ marginTop: "16px" }}>
+            <Card>
+              <SectionHead title="Traffic statistics" subtitle="Last 24 hours" />
+              <div className="mini-stats">
+                <div>
+                  <span>Incoming</span>
+                  <strong>{device.incomingTraffic || "0 B"}</strong>
+                </div>
+                <div>
+                  <span>Outgoing</span>
+                  <strong>{device.outgoingTraffic || "0 B"}</strong>
+                </div>
               </div>
-              <div>
-                <span>Outgoing</span>
-                <strong>{device.outgoingTraffic || "102 MB"}</strong>
-              </div>
-            </div>
-            <TrafficChart compact />
-          </Card>
+              <TrafficChart compact />
+            </Card>
+          </div>
 
           <div className="detail-section">
             <h3>Observed connections</h3>
-            {connections.map((x) => (
-              <div className="connection-row" key={x.host}>
-                <span className="connection-dot" />
-                <strong>{x.host}</strong>
-                <small>{x.protocol}</small>
+            {connections.length === 0 ? (
+              <div style={{ color: "var(--muted)", fontSize: "12px", padding: "8px 0" }}>
+                No active connections recorded for this device.
               </div>
-            ))}
+            ) : (
+              connections.map((x, idx) => (
+                <div className="connection-row" key={`${x.host}-${idx}`}>
+                  <span className="connection-dot" />
+                  <strong>{x.host}</strong>
+                  <small>{x.protocol}</small>
+                </div>
+              ))
+            )}
           </div>
 
           <div className="detail-section">
@@ -95,7 +129,7 @@ export default function DeviceDrawer({ device, onClose }: DeviceDrawerProps) {
                 </strong>
                 <span>
                   {device.riskLevel === "High" || device.riskLevel === "Critical"
-                    ? "Investigation in progress. Check Security Alerts tab."
+                    ? "Investigation in progress. Check the Security Alerts tab for details."
                     : "This device has no unresolved security alerts."}
                 </span>
               </div>

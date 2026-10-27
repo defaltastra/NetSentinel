@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import type { OverviewStats, SecurityEvent, IconName } from "../types";
+import type { OverviewStats, SecurityEvent, Device, TrafficData, IconName } from "../types";
 import PageHeader from "../components/layout/PageHeader";
 import StatCard from "../components/common/StatCard";
 import Card, { SectionHead } from "../components/common/Card";
@@ -11,12 +11,6 @@ import DonutChart from "../components/charts/DonutChart";
 import DateRangeModal from "../components/common/DateRangeModal";
 import api from "../services/api";
 
-const totalsByTimeframe: Record<"1H" | "24H" | "7D", string> = {
-  "1H": "482 MB total",
-  "24H": "2.94 GB total",
-  "7D": "19.4 GB total",
-};
-
 export default function Overview({
   onNavigateToAlerts,
   onNavigateToDevices,
@@ -26,24 +20,51 @@ export default function Overview({
 }) {
   const [stats, setStats] = useState<OverviewStats | null>(null);
   const [events, setEvents] = useState<SecurityEvent[]>([]);
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [trafficData, setTrafficData] = useState<TrafficData | null>(null);
   const [timeRange, setTimeRange] = useState<"1H" | "24H" | "7D">("24H");
-  const [dateRange, setDateRange] = useState("May 18 – May 24, 2025");
+  const [dateRange, setDateRange] = useState("Last 24 hours");
   const [isDateModalOpen, setIsDateModalOpen] = useState(false);
 
+  const loadData = () => {
+    Promise.all([
+      api.getOverviewStats(),
+      api.getSecurityEvents(10),
+      api.getDevices(),
+      api.getTrafficData(timeRange),
+    ]).then(([statsData, eventsData, devicesData, traffic]) => {
+      setStats(statsData);
+      setEvents(eventsData);
+      setDevices(devicesData);
+      setTrafficData(traffic);
+    });
+  };
+
   useEffect(() => {
-    let mounted = true;
-    Promise.all([api.getOverviewStats(), api.getSecurityEvents()]).then(
-      ([statsData, eventsData]) => {
-        if (mounted) {
-          setStats(statsData);
-          setEvents(eventsData);
-        }
+    loadData();
+
+    // In-place tick refresh (does not remount or reset scroll/state)
+    const unsubTick = api.onTick(loadData);
+
+    // Subscribe to live WebSocket events to automatically update overview
+    const unsubWs = api.subscribeWebSocket((event) => {
+      if (event.type === "alert" || event.type === "device" || event.type === "traffic") {
+        loadData();
       }
-    );
+    });
+
     return () => {
-      mounted = false;
+      unsubTick();
+      unsubWs();
     };
-  }, []);
+  }, [timeRange]);
+
+  // Devices ordered with online ones first
+  const recentDevices = [...devices]
+    .sort((a, b) => (a.status === "Online" ? -1 : 1))
+    .slice(0, 4);
+
+  const topDevices = trafficData?.activeDevices || [];
 
   return (
     <>
@@ -63,35 +84,35 @@ export default function Overview({
       <div className="stats-grid five">
         <StatCard
           label="Connected Devices"
-          value={stats ? stats.connectedDevices : "24"}
-          detail="+3 this week"
+          value={stats ? stats.connectedDevices : 0}
+          detail={stats ? `${stats.onlineDevices} online` : "No devices"}
           icon="devices"
         />
         <StatCard
           label="Online Devices"
-          value={stats ? stats.onlineDevices : "21"}
-          detail={`${stats ? stats.availabilityRate : "87.5"}% availability`}
+          value={stats ? stats.onlineDevices : 0}
+          detail={`${stats ? stats.availabilityRate : 0}% availability`}
           icon="wifi"
         />
         <StatCard
           label="Network Traffic"
-          value={stats ? `${stats.networkTrafficGB} GB` : "1.8 GB"}
-          detail={`+${stats ? stats.trafficDeltaPercent : "12.4"}% vs yesterday`}
+          value={stats ? `${stats.networkTrafficGB} GB` : "0 GB"}
+          detail={`${stats && stats.trafficDeltaPercent >= 0 ? "+" : ""}${stats ? stats.trafficDeltaPercent : 0}% vs previous`}
           icon="traffic"
         />
         <StatCard
           label="Active Alerts"
-          value={stats ? stats.activeAlerts : "6"}
-          detail="2 require attention"
+          value={stats ? stats.activeAlerts : 0}
+          detail={stats && stats.activeAlerts > 0 ? "Requires review" : "All clear"}
           icon="bell"
-          tone="warning"
+          tone={stats && stats.activeAlerts > 0 ? "warning" : "default"}
         />
         <StatCard
           label="Suspicious Events"
-          value={stats ? stats.suspiciousEvents24h : "12"}
+          value={stats ? stats.suspiciousEvents24h : 0}
           detail="Last 24 hours"
           icon="shield"
-          tone="warning"
+          tone={stats && stats.suspiciousEvents24h > 0 ? "warning" : "default"}
         />
       </div>
 
@@ -118,17 +139,17 @@ export default function Overview({
           <div className="legend-row">
             <span>
               <i className="legend-dot cyan" />
-              Incoming
+              Incoming: <strong>{trafficData?.incomingTotal || "0 B"}</strong>
             </span>
             <span>
               <i className="legend-dot ice" />
-              Outgoing
+              Outgoing: <strong>{trafficData?.outgoingTotal || "0 B"}</strong>
             </span>
             <strong style={{ transition: "all 0.2s ease" }}>
-              {totalsByTimeframe[timeRange]}
+              {trafficData?.totalVolume ? `${trafficData.totalVolume} total` : "0 B total"}
             </strong>
           </div>
-          <TrafficChart timeframe={timeRange as Timeframe} />
+          <TrafficChart timeframe={timeRange as Timeframe} timeline={trafficData?.timeline} />
         </Card>
 
         <Card>
@@ -141,7 +162,11 @@ export default function Overview({
               </button>
             }
           />
-          <DonutChart />
+          <DonutChart
+            segments={trafficData?.protocols || []}
+            total={trafficData?.totalVolume}
+            totalUnit="total"
+          />
         </Card>
       </div>
 
@@ -168,28 +193,36 @@ export default function Overview({
                 </tr>
               </thead>
               <tbody>
-                {events.map((row) => (
-                  <tr key={row.id || row.title} onClick={onNavigateToAlerts}>
-                    <td>
-                      <span className="event-name">
-                        <span className="event-icon">
-                          <Icon name="shield" size={15} />
-                        </span>
-                        {row.title}
-                      </span>
-                    </td>
-                    <td className="mono">{row.sourceIp}</td>
-                    <td>{row.timestamp}</td>
-                    <td>
-                      <Badge tone={row.severity.toLowerCase() as "high" | "medium" | "low"}>
-                        {row.severity}
-                      </Badge>
-                    </td>
-                    <td>
-                      <span className="status-text">{row.status}</span>
+                {events.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} style={{ textAlign: "center", padding: "32px", color: "var(--muted)" }}>
+                      No recent security events recorded.
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  events.map((row) => (
+                    <tr key={row.id || row.title} onClick={onNavigateToAlerts} style={{ cursor: "pointer" }}>
+                      <td>
+                        <span className="event-name">
+                          <span className="event-icon">
+                            <Icon name="shield" size={15} />
+                          </span>
+                          {row.title}
+                        </span>
+                      </td>
+                      <td className="mono">{row.sourceIp}</td>
+                      <td>{row.timestamp}</td>
+                      <td>
+                        <Badge tone={row.severity.toLowerCase() as "high" | "medium" | "low"}>
+                          {row.severity}
+                        </Badge>
+                      </td>
+                      <td>
+                        <span className="status-text">{row.status}</span>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </table>
           </div>
@@ -198,7 +231,7 @@ export default function Overview({
         <div className="stack">
           <Card>
             <SectionHead
-              title="Recently Connected"
+              title="Discovered Devices"
               action={
                 <button
                   className="text-button"
@@ -210,43 +243,47 @@ export default function Overview({
               }
             />
             <div className="device-list">
-              {[
-                { name: "MacBook Pro", ip: "192.168.1.47", icon: "laptop" as IconName },
-                { name: "Pixel 8", ip: "192.168.1.82", icon: "phone" as IconName },
-                { name: "Office Printer", ip: "192.168.1.16", icon: "printer" as IconName },
-              ].map((d) => (
-                <div className="device-row" key={d.name}>
-                  <span className="device-icon">
-                    <Icon name={d.icon} />
-                  </span>
-                  <div>
-                    <strong>{d.name}</strong>
-                    <span>{d.ip}</span>
-                  </div>
-                  <small>Just now</small>
+              {recentDevices.length === 0 ? (
+                <div style={{ padding: "24px 12px", textAlign: "center", color: "var(--muted)", fontSize: "12px" }}>
+                  No devices detected on network yet.
                 </div>
-              ))}
+              ) : (
+                recentDevices.map((d) => (
+                  <div className="device-row" key={d.id || d.mac}>
+                    <span className="device-icon">
+                      <Icon name={(d.icon as IconName) || "laptop"} />
+                    </span>
+                    <div>
+                      <strong>{d.name}</strong>
+                      <span>{d.ip} · {d.status}</span>
+                    </div>
+                    <small>{d.riskLevel} risk</small>
+                  </div>
+                ))
+              )}
             </div>
           </Card>
 
           <Card>
             <SectionHead title="Top Network Devices" subtitle="By traffic volume" />
             <div className="bar-list">
-              {[
-                { name: "Design-Workstation", value: "842 MB", width: 92 },
-                { name: "Media-Server", value: "621 MB", width: 70 },
-                { name: "MacBook-Pro", value: "388 MB", width: 45 },
-              ].map((d) => (
-                <div key={d.name}>
-                  <span>
-                    <strong>{d.name}</strong>
-                    <small>{d.value}</small>
-                  </span>
-                  <div className="bar-track">
-                    <i style={{ width: `${d.width}%` }} />
-                  </div>
+              {topDevices.length === 0 ? (
+                <div style={{ padding: "24px 12px", textAlign: "center", color: "var(--muted)", fontSize: "12px" }}>
+                  No device traffic recorded yet.
                 </div>
-              ))}
+              ) : (
+                topDevices.map((d) => (
+                  <div key={d.name}>
+                    <span>
+                      <strong>{d.name}</strong>
+                      <small>{d.value}</small>
+                    </span>
+                    <div className="bar-track">
+                      <i style={{ width: `${d.width}%` }} />
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </Card>
         </div>

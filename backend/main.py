@@ -131,6 +131,7 @@ def health():
     mon, dmon = state["monitor"], state["dmon"]
     return {"status": "ok", "mode": MODE, "interface": state["iface"],
             "network": state["cidr"], "uptime_s": int(time.time() - state["started"]),
+            "refresh_interval": 10,
             "capture_error": mon.error, "scan_error": dmon.error,
             "ml_ready": state["ml"].is_ready()}
 

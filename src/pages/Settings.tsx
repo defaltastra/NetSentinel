@@ -35,7 +35,7 @@ export default function Settings() {
 
   // Minimal Tab States
   const [subnet, setSubnet] = useState("192.168.1.0/24");
-  const [scanInterval, setScanInterval] = useState("Every 30 seconds");
+  const [scanInterval, setScanInterval] = useState(`${api.getRefreshInterval()}s`);
   const [inspectionMode, setInspectionMode] = useState("Passive Sniffing");
   const [autoQuarantine, setAutoQuarantine] = useState(false);
 
@@ -51,7 +51,12 @@ export default function Settings() {
   useEffect(() => {
     let mounted = true;
     api.getSettings().then((data) => {
-      if (mounted) setSettings(data);
+      if (mounted) {
+        setSettings(data);
+        if (data.refreshInterval) {
+          setScanInterval(data.refreshInterval);
+        }
+      }
     });
     return () => {
       mounted = false;
@@ -60,7 +65,10 @@ export default function Settings() {
 
   const handleSave = async () => {
     if (settings) {
-      await api.updateSettings(settings);
+      const updated = { ...settings, refreshInterval: scanInterval };
+      await api.updateSettings(updated);
+      setSettings(updated);
+      api.setRefreshInterval(scanInterval);
     }
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 2200);
@@ -71,6 +79,7 @@ export default function Settings() {
     { name: "Network Monitoring", icon: "wifi" },
     { name: "Detection Rules", icon: "shield" },
     { name: "Alert Preferences", icon: "bell" },
+    { name: "About", icon: "laptop" },
   ];
 
   return (
@@ -186,15 +195,22 @@ export default function Settings() {
                     />
                   </label>
                   <label>
-                    <span>Scan Heartbeat Interval</span>
+                    <span>Auto-Refresh & Monitoring Interval</span>
                     <Select
-                      label="Scan Interval"
+                      label="Auto-Refresh Interval"
                       value={scanInterval}
-                      onChange={setScanInterval}
+                      onChange={(val) => {
+                        setScanInterval(val);
+                        api.setRefreshInterval(val);
+                        if (settings) {
+                          setSettings({ ...settings, refreshInterval: val });
+                        }
+                      }}
                     >
-                      <option value="Every 30 seconds">Every 30 seconds (Live)</option>
-                      <option value="Every minute">Every minute</option>
-                      <option value="Every 5 minutes">Every 5 minutes</option>
+                      <option value="10s">Every 10 seconds (Live capture rate)</option>
+                      <option value="30s">Every 30 seconds</option>
+                      <option value="60s">Every minute (60s)</option>
+                      <option value="300s">Every 5 minutes (300s)</option>
                     </Select>
                   </label>
                 </div>
@@ -327,6 +343,157 @@ export default function Settings() {
           )}
 
 
+
+          {/* TAB 5: About & Creators */}
+          {activeTab === "About" && (
+            <>
+              <SectionHead
+                title="About NetSentinel"
+                subtitle="Intelligent real-time network telemetry and automated intrusion detection."
+              />
+
+              <div className="settings-section">
+                <h3>Project Overview</h3>
+                <p style={{ color: "#a5c6ca", fontSize: "11px", lineHeight: "1.7", margin: "0 0 16px" }}>
+                  NetSentinel is a high-performance network security intelligence platform. Built with Python FastAPI and React TypeScript, it monitors local subnets, inspects packet flows using Scapy, models behavioral baseline heuristics, and identifies threats in real time.
+                </p>
+                <div style={{ display: "flex", gap: "10px", flexWrap: "wrap", marginBottom: "16px" }}>
+                  <span className="badge success">Engine: FastAPI + Scapy</span>
+                  <span className="badge cyan">Dashboard: React + Vite</span>
+                  <span className="badge low">Version: NetSentinel v2.4</span>
+                </div>
+              </div>
+
+              <div className="settings-section">
+                <h3>Creators & Engineering Team</h3>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: "14px", marginTop: "12px" }}>
+                  {/* Oussama El Harti */}
+                  <div
+                    style={{
+                      background: "rgba(2, 73, 80, 0.35)",
+                      border: "1px solid var(--border-strong)",
+                      borderRadius: "10px",
+                      padding: "16px",
+                      display: "flex",
+                      flexDirection: "column",
+                      justifyContent: "space-between",
+                      gap: "12px",
+                      boxShadow: "0 4px 14px rgba(0, 20, 22, 0.25)",
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "10px" }}>
+                        <img
+                          src="/oussama.jpg"
+                          alt="Oussama El Harti"
+                          style={{
+                            width: "50px",
+                            height: "50px",
+                            borderRadius: "50%",
+                            objectFit: "cover",
+                            border: "2px solid var(--cyan)",
+                            boxShadow: "0 0 12px rgba(15, 164, 175, 0.35)",
+                            flexShrink: 0,
+                          }}
+                        />
+                        <div>
+                          <strong style={{ display: "block", fontSize: "13px", color: "var(--ice)" }}>
+                            Oussama El Harti
+                          </strong>
+                          <span style={{ fontSize: "10px", color: "var(--cyan)", fontWeight: 500, lineHeight: 1.3, display: "block" }}>
+                            Fullstack Developer | Aspiring Cybersecurity Engineer
+                          </span>
+                        </div>
+                      </div>
+                      <p style={{ margin: "4px 0 0", fontSize: "10px", color: "var(--muted)", lineHeight: 1.5 }}>
+                        Architecting fullstack telemetry applications, real-time SOC interfaces, and network security automation tools.
+                      </p>
+                    </div>
+
+                    <a
+                      href="https://www.linkedin.com/in/oussama-el-harti-b65682249/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="button secondary"
+                      style={{
+                        height: "30px",
+                        fontSize: "11px",
+                        gap: "6px",
+                        textDecoration: "none",
+                        justifyContent: "center",
+                        marginTop: "4px",
+                      }}
+                    >
+                      <Icon name="arrow" size={12} />
+                      View LinkedIn Profile
+                    </a>
+                  </div>
+
+                  {/* Wissal Aali */}
+                  <div
+                    style={{
+                      background: "rgba(2, 73, 80, 0.35)",
+                      border: "1px solid var(--border-strong)",
+                      borderRadius: "10px",
+                      padding: "16px",
+                      display: "flex",
+                      flexDirection: "column",
+                      justifyContent: "space-between",
+                      gap: "12px",
+                      boxShadow: "0 4px 14px rgba(0, 20, 22, 0.25)",
+                    }}
+                  >
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "12px", marginBottom: "10px" }}>
+                        <img
+                          src="/malak.jpg"
+                          alt="Wissal Aali"
+                          style={{
+                            width: "50px",
+                            height: "50px",
+                            borderRadius: "50%",
+                            objectFit: "cover",
+                            border: "2px solid var(--ice)",
+                            boxShadow: "0 0 12px rgba(175, 221, 229, 0.35)",
+                            flexShrink: 0,
+                          }}
+                        />
+                        <div>
+                          <strong style={{ display: "block", fontSize: "13px", color: "var(--ice)" }}>
+                            Wissal Aali
+                          </strong>
+                          <span style={{ fontSize: "10px", color: "var(--ice)", fontWeight: 500, lineHeight: 1.3, display: "block" }}>
+                            Engineering student in Communicating Systems and IT security
+                          </span>
+                        </div>
+                      </div>
+                      <p style={{ margin: "4px 0 0", fontSize: "10px", color: "var(--muted)", lineHeight: 1.5 }}>
+                        Specializing in communication network architectures, protocols, embedded systems, and comprehensive IT defense.
+                      </p>
+                    </div>
+
+                    <a
+                      href="https://www.linkedin.com/in/wissal-aali-662961348/"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="button secondary"
+                      style={{
+                        height: "30px",
+                        fontSize: "11px",
+                        gap: "6px",
+                        textDecoration: "none",
+                        justifyContent: "center",
+                        marginTop: "4px",
+                      }}
+                    >
+                      <Icon name="arrow" size={12} />
+                      View LinkedIn Profile
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Save Action Bar */}
           <div className="settings-save">

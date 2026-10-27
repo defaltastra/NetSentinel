@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import type { ReportItem } from "../types";
+import type { ReportItem, ReportSummary, Device, TrafficData } from "../types";
 import PageHeader from "../components/layout/PageHeader";
 import StatCard from "../components/common/StatCard";
 import Card, { SectionHead } from "../components/common/Card";
@@ -9,57 +9,104 @@ import Icon from "../components/common/Icon";
 import TrafficChart from "../components/charts/TrafficChart";
 import DonutChart from "../components/charts/DonutChart";
 import DateRangeModal from "../components/common/DateRangeModal";
-import { exportToCsv, exportToPdf } from "../utils/export";
 import api from "../services/api";
+
+function formatBytes(bytes: number): string {
+  if (!bytes || bytes <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(1024));
+  return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
+}
 
 export default function Reports() {
   const [reports, setReports] = useState<ReportItem[]>([]);
-  const [reportingPeriod, setReportingPeriod] = useState("May 18 – May 24, 2025");
+  const [summary, setSummary] = useState<ReportSummary | null>(null);
+  const [devices, setDevices] = useState<Device[]>([]);
+  const [trafficData, setTrafficData] = useState<TrafficData | null>(null);
+  const [reportingPeriod, setReportingPeriod] = useState("Last 24 hours");
   const [isDateModalOpen, setIsDateModalOpen] = useState(false);
   const [selectedSeverity, setSelectedSeverity] = useState<string | null>(null);
   const [showPostureDetails, setShowPostureDetails] = useState(false);
 
-  useEffect(() => {
-    let mounted = true;
-    api.getReports().then((data) => {
-      if (mounted) setReports(data);
+  const loadReports = () => {
+    Promise.all([
+      api.getReports(),
+      api.getReportSummary(24),
+      api.getDevices(),
+      api.getTrafficData("24H"),
+    ]).then(([repList, sumData, devList, trafData]) => {
+      setReports(repList);
+      setSummary(sumData);
+      setDevices(devList);
+      setTrafficData(trafData);
     });
+  };
+
+  useEffect(() => {
+    loadReports();
+    const unsubTick = api.onTick(loadReports);
     return () => {
-      mounted = false;
+      unsubTick();
     };
   }, []);
 
   const handleExportCsv = () => {
-    const headers = ["Report Name", "Reporting Period", "Generated Timestamp", "Format", "Status"];
-    const rows = reports.map((r) => [r.name, r.period, r.generatedAt, r.format, r.status]);
-    exportToCsv("netsentinel_audit_reports.csv", rows, headers);
+    window.open("/api/reports/alerts.csv", "_blank");
   };
 
   const handleExportPdf = () => {
-    exportToPdf("NetSentinel Security & Compliance Audit Report");
+    window.open("/api/reports/security-24h/download", "_blank");
   };
 
   const handleDownloadRow = (item: ReportItem) => {
-    if (item.format === "CSV") {
-      const headers = ["Metric", "Value", "Benchmark"];
-      const rows = [
-        ["Total Analyzed Traffic", "18.6 GB", "+12.2%"],
-        ["Total Security Events", "64", "-8.4%"],
-        ["Active Devices", "24", "100% covered"],
-        ["Alerts Resolved", "38", "92% rate"],
-      ];
-      exportToCsv(`${item.name.toLowerCase().replace(/\s+/g, "_")}.csv`, rows, headers);
-    } else {
-      exportToPdf(item.name);
-    }
+    window.open(`/api/reports/${encodeURIComponent(item.id)}/download`, "_blank");
   };
 
+  const onlineCount = devices.filter((d) => d.status === "Online").length;
+  const offlineCount = devices.filter((d) => d.status === "Offline").length;
+  const highRiskCount = devices.filter(
+    (d) => d.riskLevel === "High" || d.riskLevel === "Critical"
+  ).length;
+
+  const sevCounts = summary?.alerts_by_severity || {
+    critical: 0,
+    high: 0,
+    medium: 0,
+    low: 0,
+  };
+  const totalEvents = summary?.alerts_total ?? 0;
+  const maxSev = Math.max(sevCounts.critical, sevCounts.high, sevCounts.medium, sevCounts.low, 1);
+
   const severityData = [
-    { name: "Critical", value: 2, width: 12, desc: "Immediate remote code execution or data exfiltration risks" },
-    { name: "High", value: 9, width: 32, desc: "Unauthorized port scans and repeated login failures" },
-    { name: "Medium", value: 21, width: 58, desc: "Unmanaged IoT hardware or unexpected DNS spikes" },
-    { name: "Low", value: 32, width: 86, desc: "Policy variances and routine certificate renewals" },
+    {
+      name: "Critical",
+      value: sevCounts.critical,
+      width: totalEvents ? Math.round((sevCounts.critical / maxSev) * 100) : 0,
+      desc: "Immediate remote code execution or data exfiltration risks",
+    },
+    {
+      name: "High",
+      value: sevCounts.high,
+      width: totalEvents ? Math.round((sevCounts.high / maxSev) * 100) : 0,
+      desc: "Unauthorized port scans and repeated login failures",
+    },
+    {
+      name: "Medium",
+      value: sevCounts.medium,
+      width: totalEvents ? Math.round((sevCounts.medium / maxSev) * 100) : 0,
+      desc: "Unmanaged IoT hardware or unexpected DNS spikes",
+    },
+    {
+      name: "Low",
+      value: sevCounts.low,
+      width: totalEvents ? Math.round((sevCounts.low / maxSev) * 100) : 0,
+      desc: "Policy variances and routine certificate renewals",
+    },
   ];
+
+  const postureScore = summary?.score ?? 100;
+  const postureRating =
+    postureScore >= 80 ? "Good" : postureScore >= 60 ? "Moderate" : "Elevated Risk";
 
   return (
     <>
@@ -92,26 +139,26 @@ export default function Reports() {
       <div className="stats-grid four compact-stats">
         <StatCard
           label="Total Security Events"
-          value="64"
-          detail="-8.4% from last period"
+          value={totalEvents}
+          detail="Detected in selected period"
           icon="shield"
         />
         <StatCard
           label="Analyzed Traffic"
-          value="18.6 GB"
-          detail="+12.2% from last period"
+          value={summary ? formatBytes(summary.bytes) : "0 B"}
+          detail={`${summary?.packets ?? 0} packets inspected`}
           icon="traffic"
         />
         <StatCard
-          label="Devices Observed"
-          value="24"
-          detail="3 newly discovered"
+          label="Active Devices"
+          value={devices.length}
+          detail={`${onlineCount} devices currently online`}
           icon="devices"
         />
         <StatCard
-          label="Alerts Resolved"
-          value="38"
-          detail="92% resolution rate"
+          label="Security Posture Score"
+          value={`${postureScore}/100`}
+          detail={`Rating: ${postureRating}`}
           icon="check"
         />
       </div>
@@ -120,10 +167,9 @@ export default function Reports() {
         <Card className="traffic-card">
           <SectionHead
             title="Traffic Trend"
-            subtitle="Daily network traffic volume (click to inspect points)"
-            action={<Badge tone="cyan">+12.2%</Badge>}
+            subtitle="Network traffic volume across monitored interfaces"
           />
-          <TrafficChart compact />
+          <TrafficChart compact timeline={trafficData?.timeline} timeframe="24H" />
         </Card>
 
         <Card>
@@ -133,7 +179,7 @@ export default function Reports() {
           />
           <div className="severity-bars">
             <div className="severity-total">
-              <strong>64</strong>
+              <strong>{totalEvents}</strong>
               <span>Total events</span>
             </div>
             {severityData.map((item) => (
@@ -143,7 +189,10 @@ export default function Reports() {
                   cursor: "pointer",
                   padding: "4px 6px",
                   borderRadius: "6px",
-                  background: selectedSeverity === item.name ? "rgba(175, 221, 229, 0.08)" : "transparent",
+                  background:
+                    selectedSeverity === item.name
+                      ? "rgba(175, 221, 229, 0.08)"
+                      : "transparent",
                   transition: "background 0.15s ease",
                 }}
                 onClick={() =>
@@ -161,7 +210,8 @@ export default function Reports() {
                     className={item.name.toLowerCase()}
                     style={{
                       width: `${item.width}%`,
-                      boxShadow: selectedSeverity === item.name ? "0 0 8px currentColor" : undefined,
+                      boxShadow:
+                        selectedSeverity === item.name ? "0 0 8px currentColor" : undefined,
                     }}
                   />
                 </div>
@@ -180,25 +230,29 @@ export default function Reports() {
         <Card>
           <SectionHead title="Device Inventory" />
           <div className="inventory-main">
-            <strong>24</strong>
+            <strong>{devices.length}</strong>
             <span>Known devices</span>
           </div>
           <div className="inventory-pills">
             <span style={{ cursor: "pointer", background: "rgba(118, 212, 194, 0.12)", color: "#76d4c2" }}>
-              ● 21 online
+              ● {onlineCount} online
             </span>
             <span style={{ cursor: "pointer", background: "rgba(175, 221, 229, 0.08)", color: "var(--ice)" }}>
-              ○ 3 offline
+              ○ {offlineCount} offline
             </span>
             <span style={{ cursor: "pointer", background: "rgba(150, 71, 52, 0.15)", color: "#e3a191" }}>
-              ▲ 2 high risk
+              ▲ {highRiskCount} high risk
             </span>
           </div>
         </Card>
 
         <Card>
-          <SectionHead title="Protocol Summary" subtitle="Hover or click to isolate" />
-          <DonutChart />
+          <SectionHead title="Protocol Summary" subtitle="Inspected network protocols" />
+          <DonutChart
+            segments={trafficData?.protocols || []}
+            total={trafficData?.totalVolume}
+            totalUnit="total"
+          />
         </Card>
 
         <Card>
@@ -212,11 +266,15 @@ export default function Reports() {
             onClick={() => setShowPostureDetails(!showPostureDetails)}
             title="Click to view breakdown"
           >
-            <strong>84</strong>
-            <span>Good</span>
+            <strong>{postureScore}</strong>
+            <span>{postureRating}</span>
           </div>
-          <p className="center-copy" style={{ cursor: "pointer" }} onClick={() => setShowPostureDetails(!showPostureDetails)}>
-            {showPostureDetails ? "▲ Click to hide breakdown" : "▼ Up 6 pts · Click for breakdown"}
+          <p
+            className="center-copy"
+            style={{ cursor: "pointer" }}
+            onClick={() => setShowPostureDetails(!showPostureDetails)}
+          >
+            {showPostureDetails ? "▲ Click to hide breakdown" : "▼ Click for posture calculation breakdown"}
           </p>
 
           {showPostureDetails && (
@@ -232,16 +290,20 @@ export default function Reports() {
               }}
             >
               <div style={{ display: "flex", justifyContent: "space-between", color: "var(--muted)" }}>
-                <span>Endpoint Defense:</span> <strong style={{ color: "var(--ice)" }}>92/100</strong>
+                <span>Critical Alerts (-15 pts):</span>{" "}
+                <strong style={{ color: "#e3a191" }}>{sevCounts.critical}</strong>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", color: "var(--muted)" }}>
-                <span>Firewall Rule Hygiene:</span> <strong style={{ color: "var(--ice)" }}>88/100</strong>
+                <span>High Alerts (-8 pts):</span>{" "}
+                <strong style={{ color: "var(--ice)" }}>{sevCounts.high}</strong>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", color: "var(--muted)" }}>
-                <span>Incident Response SLA:</span> <strong style={{ color: "var(--ice)" }}>80/100</strong>
+                <span>Medium Alerts (-3 pts):</span>{" "}
+                <strong style={{ color: "var(--ice)" }}>{sevCounts.medium}</strong>
               </div>
               <div style={{ display: "flex", justifyContent: "space-between", color: "var(--muted)" }}>
-                <span>DNS Query Safety:</span> <strong style={{ color: "var(--ice)" }}>76/100</strong>
+                <span>Low Alerts (-1 pt):</span>{" "}
+                <strong style={{ color: "var(--muted)" }}>{sevCounts.low}</strong>
               </div>
             </div>
           )}
@@ -250,8 +312,8 @@ export default function Reports() {
 
       <Card className="table-card">
         <SectionHead
-          title="Recent Reports"
-          subtitle="Generated analytics and compliance summaries"
+          title="Generated Reports"
+          subtitle="Real-time compliance, inventory, and audit documents from backend"
         />
         <div className="table-wrap">
           <table>
@@ -266,37 +328,45 @@ export default function Reports() {
               </tr>
             </thead>
             <tbody>
-              {reports.map((r) => (
-                <tr key={r.id}>
-                  <td>
-                    <span className="event-name">
-                      <span className="event-icon">
-                        <Icon name="report" size={15} />
-                      </span>
-                      <strong>{r.name}</strong>
-                    </span>
-                  </td>
-                  <td>{r.period}</td>
-                  <td>{r.generatedAt}</td>
-                  <td>
-                    <Badge tone="neutral">{r.format}</Badge>
-                  </td>
-                  <td>
-                    <Badge tone="success">{r.status}</Badge>
-                  </td>
-                  <td>
-                    <button
-                      className="icon-button"
-                      type="button"
-                      aria-label={`Download ${r.name}`}
-                      onClick={() => handleDownloadRow(r)}
-                      title={`Download ${r.format}`}
-                    >
-                      <Icon name="download" />
-                    </button>
+              {reports.length === 0 ? (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: "center", padding: "32px", color: "var(--muted)" }}>
+                    No reports generated yet.
                   </td>
                 </tr>
-              ))}
+              ) : (
+                reports.map((r) => (
+                  <tr key={r.id}>
+                    <td>
+                      <span className="event-name">
+                        <span className="event-icon">
+                          <Icon name="report" size={15} />
+                        </span>
+                        <strong>{r.name}</strong>
+                      </span>
+                    </td>
+                    <td>{r.period}</td>
+                    <td>{r.generatedAt}</td>
+                    <td>
+                      <Badge tone="neutral">{r.format}</Badge>
+                    </td>
+                    <td>
+                      <Badge tone="success">{r.status}</Badge>
+                    </td>
+                    <td>
+                      <button
+                        className="icon-button"
+                        type="button"
+                        aria-label={`Download ${r.name}`}
+                        onClick={() => handleDownloadRow(r)}
+                        title={`Download ${r.format} from backend`}
+                      >
+                        <Icon name="download" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>

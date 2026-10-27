@@ -220,7 +220,21 @@ class Simulator:
         self.monitor.handle(p)
 
     def _loop(self) -> None:
+        last_attack = time.time()
+        attack_types = ["portscan", "synflood", "dnsflood", "arpspoof", "spike", "telnet"]
+        initial_attack_done = False
+
         while not self._stop.is_set():
+            now = time.time()
+            if not initial_attack_done and now - last_attack > 4.0:
+                self.inject("portscan")
+                initial_attack_done = True
+                last_attack = now
+            elif now - last_attack > random.uniform(25.0, 50.0):
+                chosen = random.choice(attack_types)
+                self.inject(chosen)
+                last_attack = now
+
             time.sleep(random.uniform(0.005, 0.03))
             ip = random.choice(self.HOSTS)[0]
             r = random.random()

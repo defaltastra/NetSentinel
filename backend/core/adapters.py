@@ -20,7 +20,7 @@ PROTO_COLORS = {"HTTPS": "cyan", "TCP": "ice", "UDP": "teal", "DNS": "rust",
                 "HTTP": "muted", "Other": "muted"}
 DEFAULT_SETTINGS = {
     "workspaceName": "NetSentinel SOC", "timezone": "UTC",
-    "defaultReportRange": "Last 24 hours", "refreshInterval": "30s",
+    "defaultReportRange": "Last 24 hours", "refreshInterval": "10s",
     "compactTableDensity": False, "showProtocolLabels": True,
     "demoModeIndicator": True, "dateFormat": "YYYY-MM-DD", "trafficUnits": "Auto",
 }

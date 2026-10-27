@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
-import type { Device } from "../types";
+import type { Device, BackendHealth } from "../types";
 import PageHeader from "../components/layout/PageHeader";
 import StatCard from "../components/common/StatCard";
 import Card from "../components/common/Card";
@@ -12,6 +12,7 @@ import api from "../services/api";
 
 export default function ConnectedDevices() {
   const [devices, setDevices] = useState<Device[]>([]);
+  const [health, setHealth] = useState<BackendHealth | null>(null);
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("All statuses");
@@ -22,18 +23,40 @@ export default function ConnectedDevices() {
     api.getDevices().then((data) => {
       setDevices(data);
     });
+    api.checkHealth().then(() => {
+      setHealth(api.getHealthData());
+    });
   };
 
   useEffect(() => {
     loadDevices();
+
+    // In-place tick update
+    const unsubTick = api.onTick(loadDevices);
+
+    // Subscribe to live device discovery events via WebSocket
+    const unsubWs = api.subscribeWebSocket((event) => {
+      if (event.type === "device") {
+        loadDevices();
+      }
+    });
+
+    return () => {
+      unsubTick();
+      unsubWs();
+    };
   }, []);
 
-  const handleScanSubnet = () => {
+  const handleScanSubnet = async () => {
     setIsScanning(true);
-    setTimeout(() => {
-      loadDevices();
+    try {
+      await api.scanNow();
+      await loadDevices();
+    } catch (err) {
+      console.error("Scan subnet error:", err);
+    } finally {
       setIsScanning(false);
-    }, 1200);
+    }
   };
 
   const filteredDevices = useMemo(() => {
@@ -57,6 +80,10 @@ export default function ConnectedDevices() {
   const onlineCount = devices.filter((d) => d.status === "Online").length;
   const offlineCount = devices.filter((d) => d.status === "Offline").length;
 
+  const networkLabel = health?.network
+    ? `Subnet: ${health.network}${health.interface ? ` (${health.interface})` : ""}`
+    : "Subnet Auto-Discovery Active";
+
   return (
     <>
       <PageHeader
@@ -70,7 +97,7 @@ export default function ConnectedDevices() {
             borderColor: "rgba(15, 164, 175, 0.3)",
           }}
         >
-          <span /> Auto-Discovery: 192.168.1.0/24
+          <span /> {networkLabel}
         </span>
         <Button
           variant="secondary"
@@ -85,20 +112,20 @@ export default function ConnectedDevices() {
       <div className="stats-grid three compact-stats">
         <StatCard
           label="Total Devices"
-          value={devices.length || 24}
-          detail="Auto-discovered across 3 network segments"
+          value={devices.length}
+          detail="Active network endpoints recorded"
           icon="devices"
         />
         <StatCard
           label="Online"
-          value={onlineCount || 21}
+          value={onlineCount}
           detail="Responding to ICMP/ARP heartbeats"
           icon="wifi"
         />
         <StatCard
           label="Offline"
-          value={offlineCount || 3}
-          detail="No packet traffic in past 15 min"
+          value={offlineCount}
+          detail="Inactive or unreachable"
           icon="x"
         />
       </div>
@@ -130,9 +157,6 @@ export default function ConnectedDevices() {
               <option value="Medium risk">Medium risk</option>
               <option value="Low risk">Low risk</option>
             </Select>
-            <Button variant="secondary" icon="filter">
-              Filters
-            </Button>
           </div>
         </div>
 
@@ -151,45 +175,55 @@ export default function ConnectedDevices() {
               </tr>
             </thead>
             <tbody>
-              {filteredDevices.map((row) => (
-                <tr key={row.id} onClick={() => setSelectedDevice(row)}>
-                  <td>
-                    <span className="device-name">
-                      <span className="device-icon">
-                        <Icon name={row.icon} />
-                      </span>
-                      <strong>{row.name}</strong>
-                    </span>
-                  </td>
-                  <td className="mono">{row.ip}</td>
-                  <td className="mono muted">{row.mac}</td>
-                  <td>{row.type}</td>
-                  <td>{row.firstSeen}</td>
-                  <td>
-                    <Badge tone={row.status === "Online" ? "success" : "neutral"}>
-                      {row.status}
-                    </Badge>
-                  </td>
-                  <td>
-                    <Badge tone={row.riskLevel.toLowerCase() as "high" | "medium" | "low"}>
-                      {row.riskLevel}
-                    </Badge>
-                  </td>
-                  <td>
-                    <button
-                      className="icon-button"
-                      type="button"
-                      aria-label="Actions"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setSelectedDevice(row);
-                      }}
-                    >
-                      <Icon name="more" />
-                    </button>
+              {filteredDevices.length === 0 ? (
+                <tr>
+                  <td colSpan={8} style={{ textAlign: "center", padding: "36px", color: "var(--muted)" }}>
+                    {searchQuery || statusFilter !== "All statuses" || riskFilter !== "All risk levels"
+                      ? "No devices match your search or filter criteria."
+                      : "No devices discovered yet. Click 'Scan Subnet' to discover local devices."}
                   </td>
                 </tr>
-              ))}
+              ) : (
+                filteredDevices.map((row) => (
+                  <tr key={row.id || row.mac} onClick={() => setSelectedDevice(row)} style={{ cursor: "pointer" }}>
+                    <td>
+                      <span className="device-name">
+                        <span className="device-icon">
+                          <Icon name={row.icon} />
+                        </span>
+                        <strong>{row.name}</strong>
+                      </span>
+                    </td>
+                    <td className="mono">{row.ip}</td>
+                    <td className="mono muted">{row.mac}</td>
+                    <td>{row.type}</td>
+                    <td>{row.firstSeen}</td>
+                    <td>
+                      <Badge tone={row.status === "Online" ? "success" : "neutral"}>
+                        {row.status}
+                      </Badge>
+                    </td>
+                    <td>
+                      <Badge tone={row.riskLevel.toLowerCase() as "high" | "medium" | "low"}>
+                        {row.riskLevel}
+                      </Badge>
+                    </td>
+                    <td>
+                      <button
+                        className="icon-button"
+                        type="button"
+                        aria-label="Actions"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setSelectedDevice(row);
+                        }}
+                      >
+                        <Icon name="more" />
+                      </button>
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -198,10 +232,6 @@ export default function ConnectedDevices() {
           <span>
             Showing 1–{filteredDevices.length} of {devices.length} discovered devices
           </span>
-          <div>
-            <Button variant="secondary">Previous</Button>
-            <Button variant="secondary">Next</Button>
-          </div>
         </div>
       </Card>
 
@@ -209,6 +239,10 @@ export default function ConnectedDevices() {
         <DeviceDrawer
           device={selectedDevice}
           onClose={() => setSelectedDevice(null)}
+          onDeviceUpdated={(updated) => {
+            setSelectedDevice(updated);
+            loadDevices();
+          }}
         />
       )}
     </>
