@@ -187,8 +187,7 @@ Special thanks and appreciation to:
 
 ### 👩‍💻 **[wissal01-tech](https://github.com/wissal01-tech)**
 
-for her wonderful contributions, design inspiration, and creative dedication to making this cybersecurity interface exceptional! 🚀✨
-
+for her outstanding contribution to NetSentinel's backend development, implementing FastAPI, Scapy, SQLite, real-time traffic monitoring, threat detection, and AI-powered anomaly detection. 🛡️🚀
 </div>
 
 ---
